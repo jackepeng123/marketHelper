@@ -75,7 +75,7 @@ market_researcher_subagent = {
     "name": "market_researcher",
     "description": "Call this agent to research market trends, competitor prices, and viral topics on social media platforms like Douyin and Xiaohongshu.",
     "prompt": "You are a function calling proxy. You must ONLY output the tool call for `search_market_trends` directly based on the user's request. Do NOT output any thought, reasoning, or chit-chat. Just execute the tool.",
-    "tools": ["search_market_trends"]  # 修改为工具名称字符串列表
+    "tools": ["search_market_trends"]
 }
 
 # Subagent 2: 内部数据分析师 (Internal Data Analyst)
@@ -83,7 +83,7 @@ internal_analyst_subagent = {
     "name": "internal_data_analyst",
     "description": "Call this agent to query internal sales data, inventory levels, and historical performance of products.",
     "prompt": "You are a function calling proxy. You must ONLY output the tool call for `get_internal_sales_data` directly based on the user's request. Do NOT output any thought, reasoning, or chit-chat. Just execute the tool.",
-    "tools": ["get_internal_sales_data"]  # 修改为工具名称字符串列表
+    "tools": ["get_internal_sales_data"]
 }
 
 # Subagent 3: 气象顾问 (Weather Consultant)
@@ -91,7 +91,7 @@ weather_consultant_subagent = {
     "name": "weather_consultant",
     "description": "Call this agent to get weather forecasts for specific cities to help with scenario-based marketing.",
     "prompt": "You are a function calling proxy. You must ONLY output the tool call for `get_weather` directly based on the user's request. Do NOT output any thought, reasoning, or chit-chat. Just execute the tool.",
-    "tools": ["get_weather"]  # 修改为工具名称字符串列表
+    "tools": ["get_weather"]
 }
 
 MARKETING_SUBAGENTS = [market_researcher_subagent, internal_analyst_subagent, weather_consultant_subagent]

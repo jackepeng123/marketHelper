@@ -145,33 +145,51 @@ async def run_agent_and_push_to_redis(query: str, thread_id: str, request_id: st
 # API 接口
 # -------------------------------------------------------------------------
 @app.get("/chat/stream")
-async def chat_stream_get(query: str, thread_id: str = "default_thread"):
+async def chat_stream_get(query: str = None, thread_id: str = "default_thread", request_id: str = None, last_event_id: str = "0-0"):
     """
     流式对话接口 (GET 版，方便浏览器测试)
-    - 接收: query, thread_id (query params)
+    - 接收: query (可选), thread_id, request_id (可选), last_event_id (可选)
     - 返回: SSE 流
     """
-    request_id = str(uuid.uuid4())
+    if not request_id:
+        if not query:
+            raise HTTPException(status_code=400, detail="Query is required for new request")
+        request_id = str(uuid.uuid4())
+        # 如果是新生成的 ID，说明是新请求，需要启动 Agent
+        asyncio.create_task(run_agent_and_push_to_redis(query, thread_id, request_id))
+    else:
+        # 如果客户端传了 request_id，检查 Redis 是否已有数据
+        redis_client = redis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
+        exists = await redis_client.exists(f"{STREAM_KEY_PREFIX}{request_id}")
+        await redis_client.close()
+        
+        if not exists:
+             # 如果 ID 不存在（过期或错误），必须有 query 才能重启
+             if not query:
+                 raise HTTPException(status_code=400, detail="Session expired or invalid request_id. Please provide query to restart.")
+             asyncio.create_task(run_agent_and_push_to_redis(query, thread_id, request_id))
+
     stream_key = f"{STREAM_KEY_PREFIX}{request_id}"
     
-    # 启动后台任务 (Producer)
-    asyncio.create_task(run_agent_and_push_to_redis(query, thread_id, request_id))
-
     # 定义 SSE 生成器 (Consumer)
     async def event_generator() -> AsyncGenerator[dict, None]:
         redis_client = redis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
-        last_id = "0-0"
+        # 初始 ID：如果客户端传了 last_event_id 就用它，否则从头(0-0)开始
+        current_id = last_event_id
+        
+        # 第一次连接时，先发一个 meta 事件告诉客户端本次的 request_id
+        yield {"event": "meta", "data": json.dumps({"request_id": request_id})}
         
         try:
             while True:
-                streams = await redis_client.xread({stream_key: last_id}, count=1, block=5000)
+                streams = await redis_client.xread({stream_key: current_id}, count=1, block=5000)
                 
                 if not streams:
                     continue
                     
                 for _, messages in streams:
                     for msg_id, msg_data in messages:
-                        last_id = msg_id
+                        current_id = msg_id
                         msg_type = msg_data.get("type")
                         
                         if msg_type == "done":
@@ -180,7 +198,7 @@ async def chat_stream_get(query: str, thread_id: str = "default_thread"):
                             yield {"event": "error", "data": msg_data.get("content")}
                             return
 
-                        yield {"event": "message", "data": json.dumps(msg_data, ensure_ascii=False)}
+                        yield {"event": "message", "id": msg_id, "data": json.dumps(msg_data, ensure_ascii=False)}
         finally:
             await redis_client.close()
 

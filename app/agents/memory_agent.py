@@ -161,7 +161,6 @@ async def _node_route(state: AgentState) -> dict[str, Any]:
 
 
 async def _node_chat(state: AgentState) -> dict[str, Any]:
-    # _log("🤖 正在进行简单对话...")  # Chat usually doesn't need detailed logs
     model = get_deepseek_model(temperature=0.7)
     resp = await model.ainvoke(_recent_messages(state["messages"]))
     return {"messages": [AIMessage(content=resp.content or "")]}
