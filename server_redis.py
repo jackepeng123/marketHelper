@@ -7,6 +7,7 @@ from typing import AsyncGenerator
 
 from dotenv import find_dotenv, load_dotenv
 from fastapi import FastAPI, Request, HTTPException
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
@@ -19,6 +20,12 @@ from app.agents.memory_agent import AgentState, _node_route, _node_chat, _node_k
 _ = load_dotenv(find_dotenv())
 
 app = FastAPI(title="智能营销助手 API (Redis Stream版)", version="1.0.0")
+
+# 挂载静态文件目录，用于访问生成的图表
+# 访问路径: http://localhost:8000/static/charts/xxx.png
+if not os.path.exists("static"):
+    os.makedirs("static")
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # 允许跨域
 app.add_middleware(

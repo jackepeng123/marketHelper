@@ -9,7 +9,9 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
 from app.core.llm import get_deepseek_model
-from app.agents.tools.marketing_tools import get_internal_sales_data, get_weather, search_market_trends
+from app.agents.tools.context_tool import get_context_info
+from app.agents.tools.manus_tool import manus_market_research
+from app.agents.tools.file_tool import analyze_sales_file
 
 
 class AgentState(TypedDict):
@@ -75,15 +77,34 @@ async def _search_mock_knowledge(query: str, messages: list[BaseMessage] | None 
     return "\n".join(results)
 
 
-async def _classify_intent_text(query: str) -> str:
-    model = get_deepseek_model(temperature=0.0)
-    prompt = f"""
-You are an intent classifier. Analyze the user's query and return ONLY one of the following labels:
-- \"chat\": For casual greetings, simple questions, or requests that don't need data analysis.
-- \"analysis\": For requests related to marketing analysis, sales data, market trends, or business advice.
-- \"knowledge\": For specific how-to questions, operational guides, or platform UI usage questions.
+from datetime import datetime
 
-User Query: \"{query}\"
+# ...
+
+async def _classify_intent_text(query: str, messages: list[BaseMessage] | None = None) -> str:
+    model = get_deepseek_model(temperature=0.0)
+    
+    # 构造历史对话上下文（仅取最后两轮，避免干扰过多）
+    context = ""
+    if messages:
+        recent = _recent_messages(messages, keep_last=4)
+        for msg in recent:
+            role = "User" if isinstance(msg, HumanMessage) else "Assistant"
+            content = getattr(msg, "content", str(msg))
+            context += f"{role}: {content}\n"
+            
+    prompt = f"""
+You are an intent classifier. Analyze the user's query within the conversation context and return ONLY one of the following labels:
+- "chat": For casual greetings, simple questions, or requests that don't need data analysis.
+- "analysis": For requests related to marketing analysis, sales data, market trends, or business advice. Also includes follow-up requests for data (e.g., "Please check weather", "Yes, check it").
+- "knowledge": For specific how-to questions, operational guides, or platform UI usage questions.
+
+Current Date: {datetime.now().strftime('%Y-%m-%d')}
+
+Conversation Context:
+{context}
+
+User Query: "{query}"
 
 Return ONLY the label.
 """
@@ -91,28 +112,59 @@ Return ONLY the label.
     return (resp.content or "").strip().lower().replace('"', "")
 
 
+
 def _log(msg: str):
     print(msg, flush=True)
 
-async def _plan_marketing_tools(query: str) -> list[dict[str, Any]]:
+from app.agents.tools.file_tool import analyze_sales_file
+from app.agents.tools.douyin_tools import get_douyin_verify_records, get_douyin_comments, get_douyin_sales_report
+
+available_tools_prompt = """
+可用工具：
+- manus_market_research: 外部深度市场调研（args: query, depth）。
+  * 用于查询市场趋势、竞品分析、行业报告等外部信息。
+  * depth 可选: 'quick', 'general'(默认)。
+- get_context_info: 环境上下文（天气、节假日、位置）（args: city, date, forecast_days）
+- analyze_sales_file: Excel/CSV 表格文件分析（args: file_path, need_chart, chart_type）。
+  * 仅在检测到用户上传了文件（提示中包含 'User uploaded a file at...'）时，或者用户明确要求分析当前上传的表格时调用此工具。
+  * 不要因为历史消息里有文件就重复调用，除非用户当前意图是分析它。
+  * 支持 need_chart 和 chart_type 参数。
+- get_douyin_verify_records: 抖音验券历史查询（args: date）。
+  * date: YYYY-MM-DD，默认为昨日。
+- get_douyin_comments: 抖音商品评价查询（args: product_name）。
+  * 用于查询特定商品的最新评价（最近90天）。
+- get_douyin_sales_report: 抖音周期性销售报表（args: start_date, end_date, need_chart）。
+  * 用于查询一段时间（如上周、上个月）的销售汇总和趋势。need_chart 默认为 True。
+"""
+
+async def _plan_marketing_tools(query: str, messages: list[BaseMessage]) -> list[dict[str, Any]]:
     _log("🛠️  [执行计划]: 正在进行 -> 规划工具调用并并行获取数据")
     model = get_deepseek_model(temperature=0.0)
-    system = """
+    system = f"""
 你是一个工具选择器。根据用户问题，从下列工具中选择需要调用的工具，并为每个工具给出参数。
+Today is: {datetime.now().strftime('%Y-%m-%d')}
+
 要求：
 1) 只输出严格 JSON，不要输出任何其它文字。
 2) tools 是数组，每个元素包含 name 和 args。
-3) 每个工具最多调用一次；不要为了“更全面”重复调用同一个工具。
-4) 如果用户明确排除某因素（例如“不谈天气/不考虑天气”），不要选择对应工具。
-可用工具：
-- get_internal_sales_data: 内部销量与库存（args: product_name, days）
-- search_market_trends: 外部趋势与竞品（args: keyword, platform）
-- get_weather: 天气信息（args: city）
+3) 每个工具最多调用一次。
+4) 如果用户明确排除某因素，不要选择对应工具。
+5) 【重要 - 避免重复调用】：
+   - 在决定调用工具前，必须仔细检查 CONTEXT (对话历史)。
+   - 如果用户的问题是基于历史数据进行的追问（例如“为什么这么低？”、“有什么改进建议？”），且相关数据（如销售报表、评论）已经在历史对话中给出，则 **不要** 再次调用工具。返回空数组 [] 即可。
+   - 只有当用户明确要求新的时间段、新的数据、或历史记录中缺少回答当前问题所需的数据时，才调用工具。
+   - 如果历史记录中已经有图表，且用户没有要求画新图，不要重复生成图表。
+
+{available_tools_prompt}
+
 JSON 格式示例：
-{"tools":[{"name":"get_internal_sales_data","args":{"product_name":"草莓蛋糕","days":7}},{"name":"search_market_trends","args":{"keyword":"草莓蛋糕","platform":"all"}}]}
+{{"tools":[{{"name":"get_douyin_sales_report","args":{{"start_date":"2024-01-01", "end_date": "2024-01-07", "need_chart": true}}}},{{"name":"get_context_info","args":{{"city":"上海", "forecast_days": "15d"}}}}]}}
 """
-    user = f"用户问题：{query}"
-    resp = await model.ainvoke([SystemMessage(content=system), HumanMessage(content=user)])
+    # ...
+    input_messages = [SystemMessage(content=system)] + _recent_messages(messages)
+    input_messages.append(HumanMessage(content=f"Current Plan Request: {query}"))
+
+    resp = await model.ainvoke(input_messages)
     text = (resp.content or "").strip()
     try:
         start = text.find("{")
@@ -122,7 +174,7 @@ JSON 格式示例：
         if isinstance(tools, list):
             normalized: list[dict[str, Any]] = []
             seen: set[str] = set()
-            allowed = {"get_internal_sales_data", "search_market_trends", "get_weather"}
+            allowed = {"manus_market_research", "get_context_info", "analyze_sales_file", "get_douyin_verify_records", "get_douyin_comments", "get_douyin_sales_report"}
             for item in tools:
                 if not isinstance(item, dict):
                     continue
@@ -141,11 +193,10 @@ JSON 格式示例：
 
     exclude_weather = any(k in query for k in ["不谈天气", "不考虑天气", "不含天气", "排除天气"])
     planned: list[dict[str, Any]] = [
-        {"name": "get_internal_sales_data", "args": {"product_name": "草莓蛋糕"}},
-        {"name": "search_market_trends", "args": {"keyword": "草莓蛋糕", "platform": "all"}},
+        {"name": "manus_market_research", "args": {"query": "草莓蛋糕市场趋势", "depth": "general"}},
     ]
     if not exclude_weather:
-        planned.append({"name": "get_weather", "args": {}})
+        planned.append({"name": "get_context_info", "args": {}})
     tools_str = ", ".join(t.get("name", "unknown") for t in planned)
     _log(f"🛠️  [执行计划]: 将调用工具 -> {tools_str}")
     return planned
@@ -153,7 +204,7 @@ JSON 格式示例：
 
 async def _node_route(state: AgentState) -> dict[str, Any]:
     query = _last_user_text(state["messages"])
-    intent = await _classify_intent_text(query)
+    intent = await _classify_intent_text(query, state["messages"])
     if intent not in {"chat", "knowledge", "analysis"}:
         intent = "chat"
     _log(f"\n🔍 意图识别结果: [{intent}]")
@@ -189,13 +240,16 @@ async def _node_analysis(state: AgentState) -> dict[str, Any]:
     if inferred_product and inferred_product not in query_for_plan:
         query_for_plan = f"{query_for_plan}（商品：{inferred_product}）"
     
-    plan = await _plan_marketing_tools(query_for_plan)
+    plan = await _plan_marketing_tools(query_for_plan, state["messages"])
     
     # Subagent mapping display (Mocking the subagent call log for better UX)
     tool_to_subagent = {
-        "get_internal_sales_data": "internal_data_analyst",
-        "search_market_trends": "market_researcher",
-        "get_weather": "weather_consultant"
+        "manus_market_research": "market_researcher",
+        "get_context_info": "context_consultant",
+        "analyze_sales_file": "file_data_analyst",
+        "get_douyin_verify_records": "douyin_operations_specialist",
+        "get_douyin_comments": "douyin_operations_specialist",
+        "get_douyin_sales_report": "douyin_operations_specialist"
     }
     
     for tool_call in plan:
@@ -204,9 +258,12 @@ async def _node_analysis(state: AgentState) -> dict[str, Any]:
         _log(f"🛠️  [调用子智能体]: {sub_name} -> 任务: 执行 {t_name}")
 
     tool_map = {
-        "get_internal_sales_data": get_internal_sales_data,
-        "search_market_trends": search_market_trends,
-        "get_weather": get_weather,
+        "manus_market_research": manus_market_research,
+        "get_context_info": get_context_info,
+        "analyze_sales_file": analyze_sales_file,
+        "get_douyin_verify_records": get_douyin_verify_records,
+        "get_douyin_comments": get_douyin_comments,
+        "get_douyin_sales_report": get_douyin_sales_report
     }
 
     async def _run_one(call: dict[str, Any]) -> dict[str, Any]:
@@ -233,7 +290,12 @@ async def _node_analysis(state: AgentState) -> dict[str, Any]:
 要求：
 1) 只输出最终报告，不要输出思考过程，不要自问自答，不要反问用户。
 2) 不要调用任何工具。
-3) 输出为纯文本，不要使用 Markdown 标记（例如 ##、**、- 等）。
+3) 输出为纯文本，不要使用 Markdown 标记（例如 ##、**、- 等），但图表链接除外。
+4) 【重要】如果工具返回了图片 URL (chart_url)，必须在报告末尾以 Markdown 图片格式 `![Chart](url)` 独立一行展示。
+   - 如果本轮对话没有调用工具，或者工具没有返回新的图片，**严禁** 复制历史消息中的旧图片链接。
+   - 只有当 `chart_url` 出现在下方的“工具返回数据”中时，才允许展示。
+5) 仅在回答针对过去销量的归因分析类问题时，如果你发现销售数据（如 get_douyin_sales_report 返回的数据）在某些具体日期有异常波动（如暴跌或暴涨），且目前缺乏那几天的天气数据，才请在报告结尾主动建议用户：“我注意到 [日期] 的销量有异常波动，是否需要我查询那几天的历史天气以进行归因分析？”。对于未来策划类问题，不要输出此建议。
+6) 请注意，系统目前仅支持查询过去 10 天内的历史天气。不要建议用户查询超过 10 天前的历史数据。
 """
     tool_data = "工具返回数据（JSON）：\n" + json.dumps(normalized_results, ensure_ascii=False)
     model_messages = [
