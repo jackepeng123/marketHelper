@@ -18,20 +18,6 @@ class AgentState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
     intent: str
 
-
-MOCK_KNOWLEDGE_BASE: dict[str, dict[str, str]] = {
-    "抖音": {
-        "ui": "抖音的UI界面主要包括首页（推荐/关注）、朋友、消息、我四个底部Tab。中间的'+'号用于发布视频。",
-        "上架": "在抖音后台上架商品，请进入【抖店后台】->【商品管理】->【新建商品】，填写标题、价格、库存并上传图片后提交审核。",
-        "直播": "开启直播需要实名认证。点击底部'+'号，选择右下角的【开直播】，设置封面和标题后即可开始。",
-    },
-    "小红书": {
-        "笔记": "发布笔记请点击底部'+'号，选择【图片】或【视频】，编辑滤镜和贴纸，添加正文和话题标签后发布。",
-        "薯条": "薯条是小红书的内容推广工具，可以在笔记右上角菜单中找到【薯条推广】入口。",
-    },
-}
-
-
 def _last_user_text(messages: list[BaseMessage]) -> str:
     for msg in reversed(messages):
         if isinstance(msg, HumanMessage):
@@ -45,14 +31,7 @@ def _recent_messages(messages: list[BaseMessage], keep_last: int = 12) -> list[B
         return messages
     return messages[-keep_last:]
 
-def _infer_platform_from_history(messages: list[BaseMessage]) -> str:
-    for msg in reversed(messages):
-        if isinstance(msg, HumanMessage):
-            text = msg.content or ""
-            for platform in MOCK_KNOWLEDGE_BASE.keys():
-                if platform in text:
-                    return platform
-    return ""
+
 
 def _infer_product_from_history(messages: list[BaseMessage]) -> str:
     for msg in reversed(messages):
@@ -62,19 +41,14 @@ def _infer_product_from_history(messages: list[BaseMessage]) -> str:
     return ""
 
 
+def _infer_platform_from_history(messages: list[BaseMessage]) -> str:
+    # 简化：仅保留结构，暂不依赖 MOCK 数据
+    return ""
+
+
 async def _search_mock_knowledge(query: str, messages: list[BaseMessage] | None = None) -> str:
-    results: list[str] = []
-    for platform, data in MOCK_KNOWLEDGE_BASE.items():
-        if platform in query:
-            for key, content in data.items():
-                if key in query or platform in query:
-                    results.append(f"[{platform}-{key}]: {content}")
-    if not results:
-        platform = _infer_platform_from_history(messages or [])
-        if platform:
-            return await _search_mock_knowledge(f"{platform}{query}", None)
-        return "未找到相关操作指南，请尝试访问官方帮助中心。"
-    return "\n".join(results)
+    # 已废弃：直接返回空字符串
+    return ""
 
 
 from datetime import datetime
@@ -95,9 +69,8 @@ async def _classify_intent_text(query: str, messages: list[BaseMessage] | None =
             
     prompt = f"""
 You are an intent classifier. Analyze the user's query within the conversation context and return ONLY one of the following labels:
-- "chat": For casual greetings, simple questions, or requests that don't need data analysis.
-- "analysis": For requests related to marketing analysis, sales data, market trends, or business advice. Also includes follow-up requests for data (e.g., "Please check weather", "Yes, check it").
-- "knowledge": For specific how-to questions, operational guides, or platform UI usage questions.
+- "chat": For casual greetings, simple questions, or requests that don't need data analysis or external knowledge.
+- "analysis": For requests related to marketing analysis, sales data, market trends, business advice, OR specific how-to questions/operational guides (knowledge retrieval).
 
 Current Date: {datetime.now().strftime('%Y-%m-%d')}
 
@@ -118,9 +91,12 @@ def _log(msg: str):
 
 from app.agents.tools.file_tool import analyze_sales_file
 from app.agents.tools.douyin_tools import get_douyin_verify_records, get_douyin_comments, get_douyin_sales_report
+from app.agents.tools.knowledge_tool import search_knowledge_base
 
 available_tools_prompt = """
 可用工具：
+- search_knowledge_base: 内部知识库检索（args: query）。
+  * 用于回答名词解释、操作指南、平台规则等问题（如“抖音怎么上架”）。
 - manus_market_research: 外部深度市场调研（args: query, depth）。
   * 用于查询市场趋势、竞品分析、行业报告等外部信息。
   * depth 可选: 'quick', 'general'(默认)。
@@ -174,7 +150,7 @@ JSON 格式示例：
         if isinstance(tools, list):
             normalized: list[dict[str, Any]] = []
             seen: set[str] = set()
-            allowed = {"manus_market_research", "get_context_info", "analyze_sales_file", "get_douyin_verify_records", "get_douyin_comments", "get_douyin_sales_report"}
+            allowed = {"manus_market_research", "get_context_info", "analyze_sales_file", "get_douyin_verify_records", "get_douyin_comments", "get_douyin_sales_report", "search_knowledge_base"}
             for item in tools:
                 if not isinstance(item, dict):
                     continue
@@ -205,7 +181,8 @@ JSON 格式示例：
 async def _node_route(state: AgentState) -> dict[str, Any]:
     query = _last_user_text(state["messages"])
     intent = await _classify_intent_text(query, state["messages"])
-    if intent not in {"chat", "knowledge", "analysis"}:
+    
+    if intent not in {"chat", "analysis"}:
         intent = "chat"
     _log(f"\n🔍 意图识别结果: [{intent}]")
     return {"intent": intent}
@@ -218,19 +195,9 @@ async def _node_chat(state: AgentState) -> dict[str, Any]:
 
 
 async def _node_knowledge(state: AgentState) -> dict[str, Any]:
-    _log("🛠️  [执行计划]: 正在进行 -> 知识库检索与回答生成")
-    query = _last_user_text(state["messages"])
-    context = await _search_mock_knowledge(query, state["messages"])
-    _log("✅ [检索完成]: 已获取知识片段")
-    model = get_deepseek_model(temperature=0.1)
-    system = "你是平台操作指南助手。结合对话历史与参考信息回答用户问题。不要编造。"
-    model_messages: list[BaseMessage] = [
-        SystemMessage(content=system),
-        *_recent_messages(state["messages"]),
-        HumanMessage(content=f"补充参考信息（用于回答上一条用户问题）：\n{context}"),
-    ]
-    resp = await model.ainvoke(model_messages, config={"tags": ["final_answer"]})
-    return {"messages": [AIMessage(content=resp.content or "")]}
+    # 已废弃，但为了保持 Graph 结构定义暂留空实现，或直接移除节点定义
+    # 在 create_memory_router_agent 中已经移除了该节点的注册
+    pass
 
 
 async def _node_analysis(state: AgentState) -> dict[str, Any]:
@@ -249,7 +216,8 @@ async def _node_analysis(state: AgentState) -> dict[str, Any]:
         "analyze_sales_file": "file_data_analyst",
         "get_douyin_verify_records": "douyin_operations_specialist",
         "get_douyin_comments": "douyin_operations_specialist",
-        "get_douyin_sales_report": "douyin_operations_specialist"
+        "get_douyin_sales_report": "douyin_operations_specialist",
+        "search_knowledge_base": "knowledge_librarian"
     }
     
     for tool_call in plan:
@@ -263,7 +231,8 @@ async def _node_analysis(state: AgentState) -> dict[str, Any]:
         "analyze_sales_file": analyze_sales_file,
         "get_douyin_verify_records": get_douyin_verify_records,
         "get_douyin_comments": get_douyin_comments,
-        "get_douyin_sales_report": get_douyin_sales_report
+        "get_douyin_sales_report": get_douyin_sales_report,
+        "search_knowledge_base": search_knowledge_base
     }
 
     async def _run_one(call: dict[str, Any]) -> dict[str, Any]:
@@ -311,15 +280,13 @@ def create_memory_router_agent():
     graph = StateGraph(AgentState)
     graph.add_node("route", _node_route)
     graph.add_node("chat", _node_chat)
-    graph.add_node("knowledge", _node_knowledge)
     graph.add_node("analysis", _node_analysis)
     graph.add_edge(START, "route")
 
     def _choose(state: AgentState) -> str:
         return state.get("intent", "chat")
 
-    graph.add_conditional_edges("route", _choose, {"chat": "chat", "knowledge": "knowledge", "analysis": "analysis"})
+    graph.add_conditional_edges("route", _choose, {"chat": "chat", "analysis": "analysis"})
     graph.add_edge("chat", END)
-    graph.add_edge("knowledge", END)
     graph.add_edge("analysis", END)
     return graph.compile(checkpointer=InMemorySaver())

@@ -18,3 +18,19 @@ def get_deepseek_model(temperature: float = 0.0):
         max_tokens=4096,
         streaming=True 
     )
+
+from langchain_community.embeddings import QianfanEmbeddingsEndpoint
+from dotenv import find_dotenv, load_dotenv
+
+_ = load_dotenv(find_dotenv())
+
+ak = (os.environ.get('QIANFAN_ACCESS_KEY') or '').strip()
+sk = (os.environ.get('QIANFAN_SECRET_KEY') or '').strip()
+
+def get_embeddings_model():
+    """
+    获取 Embedding 模型。
+    使用百度千帆 Embedding-V1。
+    需要环境变量: QIANFAN_ACCESS_KEY, QIANFAN_SECRET_KEY
+    """
+    return QianfanEmbeddingsEndpoint()

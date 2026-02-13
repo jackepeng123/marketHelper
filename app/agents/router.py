@@ -3,37 +3,8 @@ import json
 from langchain_core.messages import HumanMessage, SystemMessage
 from app.core.llm import get_deepseek_model
 from app.agents.tools.marketing_tools import get_internal_sales_data, search_market_trends, get_weather
-
-# -------------------------------------------------------------------------
-# Mock 知识库数据
-# -------------------------------------------------------------------------
-MOCK_KNOWLEDGE_BASE = {
-    "抖音": {
-        "ui": "抖音的UI界面主要包括首页（推荐/关注）、朋友、消息、我四个底部Tab。中间的'+'号用于发布视频。",
-        "上架": "在抖音后台上架商品，请进入【抖店后台】->【商品管理】->【新建商品】，填写标题、价格、库存并上传图片后提交审核。",
-        "直播": "开启直播需要实名认证。点击底部'+'号，选择右下角的【开直播】，设置封面和标题后即可开始。"
-    },
-    "小红书": {
-        "笔记": "发布笔记请点击底部'+'号，选择【图片】或【视频】，编辑滤镜和贴纸，添加正文和话题标签后发布。",
-        "薯条": "薯条是小红书的内容推广工具，可以在笔记右上角菜单中找到【薯条推广】入口。"
-    }
-}
-
-async def search_mock_knowledge(query: str) -> str:
-    """
-    简单的关键词匹配检索
-    """
-    results = []
-    for platform, data in MOCK_KNOWLEDGE_BASE.items():
-        if platform in query:
-            for key, content in data.items():
-                if key in query or platform in query: # 简单匹配
-                    results.append(f"[{platform}-{key}]: {content}")
-    
-    if not results:
-        return "未找到相关操作指南，请尝试访问官方帮助中心。"
-    
-    return "\n".join(results)
+from app.agents.tools.context_tool import get_context_info
+from app.agents.tools.knowledge_tool import search_knowledge_base
 
 # -------------------------------------------------------------------------
 # 路由与处理逻辑
@@ -74,8 +45,15 @@ async def handle_simple_chat(query: str):
 async def handle_knowledge_query(query: str):
     print("📚 正在检索知识库...")
     
-    # 1. 检索
-    context = await search_mock_knowledge(query)
+    # 1. 检索 (调用新工具)
+    result = search_knowledge_base.invoke({"query": query})
+    context = ""
+    if result.get("status") == "success":
+        for item in result.get("results", []):
+            context += f"Source: {item['source']}\nContent: {item['content']}\n\n"
+    else:
+        context = "未找到相关操作指南，请尝试访问官方帮助中心。"
+        
     print(f"✅ 检索到相关知识:\n{context}\n")
     
     # 2. 生成回答
