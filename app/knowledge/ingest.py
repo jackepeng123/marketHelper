@@ -177,17 +177,8 @@ def ingest_knowledge(source_dir: str = "knowledge/knowledge_db"):
                 # 计算向量
                 vector = embeddings_model.embed_query(content)
                 
-                # ⚠️ 注意：千帆 Embedding-V1 维度通常是 384，而我们之前数据库初始化默认为 vector(1536)
-                # 如果插入失败，可能需要修改数据库列定义。
-                # 检查维度：
-                if i == 0:
-                    dim = len(vector)
-                    print(f"ℹ️ Embedding Dimension: {dim}")
-                    if dim != 1536:
-                        print(f"⚠️ Warning: Database expects 1536 dims, but model returns {dim}.")
-                        print("   Automatic fix: Altering table column to vector({dim})...")
-                        conn.execute(text(f"ALTER TABLE knowledge_chunks ALTER COLUMN embedding TYPE vector({dim});"))
-                        conn.commit()
+                # ⚠️ 已在 init_db.py 中统一将 vector 定义为 384 维，移除自动 ALTER 逻辑
+                # 保持代码简洁，信任数据库初始化时的定义
                 
                 # 插入 SQL
                 sql = text("""

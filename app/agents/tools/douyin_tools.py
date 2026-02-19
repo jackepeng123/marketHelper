@@ -350,6 +350,10 @@ def _process_comment_data(data: dict, product_name: str) -> dict:
     print(f"✅ [Douyin Comment Data]:\n{json.dumps(result, indent=2, ensure_ascii=False)}")
     return result
 
+from app.core.llm import get_embeddings_model
+
+# ...
+
 @tool("get_douyin_comments", args_schema=CommentQueryInput)
 def get_douyin_comments(product_name: str) -> dict:
     """
@@ -362,26 +366,48 @@ def get_douyin_comments(product_name: str) -> dict:
     if not db_engine:
         return {"error": "Database connection failed (DATABASE_URL missing)"}
 
-    # 1. 查数据库获取 product_id
+    # 1. 查数据库获取 product_id (混合搜索：先向量，后模糊)
     product_id = None
     matched_name = None
     
     try:
+        # 获取 Embedding
+        embeddings_model = get_embeddings_model()
+        query_vector = embeddings_model.embed_query(product_name)
+        
         with db_engine.connect() as conn:
-            # 模糊查询
-            sql = text("SELECT product_id, name FROM products WHERE name LIKE :p_name LIMIT 1")
-            result = conn.execute(sql, {"p_name": f"%{product_name}%"}).fetchone()
+            # A. 尝试向量相似度匹配 (pgvector <-> 欧氏距离，<=> 余弦距离)
+            # 只有当相似度足够高时才采用
+            sql_vector = text("""
+                SELECT product_id, name, (embedding <=> CAST(:query_vector AS vector)) as distance
+                FROM products 
+                ORDER BY distance ASC 
+                LIMIT 1
+            """)
+            result = conn.execute(sql_vector, {"query_vector": query_vector}).fetchone()
             
-            if result:
+            # 阈值判定 (距离 < 0.4 表示相似度 > 0.6)
+            if result and result[2] < 0.4:
                 product_id = result[0]
                 matched_name = result[1]
-            else:
-                return {"error": f"Product '{product_name}' not found in local database."}
+                print(f"🎯 [Vector Match] '{product_name}' -> '{matched_name}' (Dist: {result[2]:.4f})")
+            
+            # B. 如果向量匹配失败，回退到 LIKE 模糊查询
+            if not product_id:
+                print(f"⚠️ [Vector Miss] '{product_name}' distance too high or no result. Fallback to LIKE.")
+                sql_like = text("SELECT product_id, name FROM products WHERE name LIKE :p_name LIMIT 1")
+                result = conn.execute(sql_like, {"p_name": f"%{product_name}%"}).fetchone()
+                
+                if result:
+                    product_id = result[0]
+                    matched_name = result[1]
+                    print(f"🎯 [LIKE Match] '{product_name}' -> '{matched_name}'")
+            
+            if not product_id:
+                return {"error": f"Product '{product_name}' not found in local database (both Vector and LIKE failed)."}
+                
     except Exception as e:
-        return {"error": f"Database Error: {str(e)}"}
-
-    if not product_id:
-        return {"error": f"No product_id found for {product_name}"}
+        return {"error": f"Database/Embedding Error: {str(e)}"}
 
     # 2. 准备时间戳 (最近90天)
     end_ts = int(time.time())

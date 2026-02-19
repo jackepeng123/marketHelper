@@ -1,5 +1,15 @@
 import os
 from langchain_openai import ChatOpenAI
+from langchain_community.embeddings import QianfanEmbeddingsEndpoint
+from dotenv import load_dotenv, find_dotenv
+
+# -------------------------------------------------------------------------
+# 加载环境变量
+# -------------------------------------------------------------------------
+# ⚠️ 注意: 移除重复加载，避免并发读取 .env 导致 TimeoutError
+# 仅当环境变量未加载时尝试加载
+if not os.getenv("OPENAI_API_KEY"):
+    _ = load_dotenv(find_dotenv())
 
 # -------------------------------------------------------------------------
 # DeepSeek 模型配置

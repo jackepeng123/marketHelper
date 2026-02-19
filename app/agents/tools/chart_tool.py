@@ -1,4 +1,8 @@
+# 配置 matplotlib 使用非 GUI 后端
+import matplotlib
+matplotlib.use('Agg') # 关键修复：使用 Agg 后端，不依赖 GUI
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 from matplotlib.ticker import MaxNLocator
 import os
 import uuid

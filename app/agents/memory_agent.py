@@ -99,7 +99,7 @@ available_tools_prompt = """
   * 用于回答名词解释、操作指南、平台规则等问题（如“抖音怎么上架”）。
 - manus_market_research: 外部深度市场调研（args: query, depth）。
   * 用于查询市场趋势、竞品分析、行业报告等外部信息。
-  * depth 可选: 'quick', 'general'(默认)。
+  * depth 可选: 'quick'。
 - get_context_info: 环境上下文（天气、节假日、位置）（args: city, date, forecast_days）
 - analyze_sales_file: Excel/CSV 表格文件分析（args: file_path, need_chart, chart_type）。
   * 仅在检测到用户上传了文件（提示中包含 'User uploaded a file at...'）时，或者用户明确要求分析当前上传的表格时调用此工具。
@@ -189,8 +189,9 @@ async def _node_route(state: AgentState) -> dict[str, Any]:
 
 
 async def _node_chat(state: AgentState) -> dict[str, Any]:
+    # ⚠️ 修复：增加 tags=["final_answer"] 使得流式输出能被捕获
     model = get_deepseek_model(temperature=0.7)
-    resp = await model.ainvoke(_recent_messages(state["messages"]))
+    resp = await model.ainvoke(_recent_messages(state["messages"]), config={"tags": ["final_answer"]})
     return {"messages": [AIMessage(content=resp.content or "")]}
 
 
