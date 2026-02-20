@@ -5,6 +5,7 @@ from sqlalchemy import create_engine, text
 from dotenv import load_dotenv, find_dotenv
 from app.core.llm import get_embeddings_model, get_deepseek_model
 from langchain_core.messages import SystemMessage, HumanMessage
+from app.utils.nacos_client import get_prompt
 
 _ = load_dotenv(find_dotenv())
 DB_URL = os.getenv("DATABASE_URL")
@@ -18,25 +19,15 @@ def _rewrite_query(query: str) -> str:
     """
     try:
         model = get_deepseek_model(temperature=0.0)
-        # 参考了 RAG 教程的场景化改写提示词
-        prompt = f"""
-你是一个专业的搜索引擎查询优化器。请将用户的原始查询改写为更清晰、更准确、更适合向量检索的形式。
-
-【改写策略参考】
-1. 口语化表达规范化：将“这个APP咋用”改写为“APP使用指南”
-2. 冗长查询精炼化：去除冗余描述，提取核心实体和意图
-3. 拼写错误纠正：自动修正明显的错别字
-4. 术语缩写扩展：如将“HRBP”扩展或解释为“人力资源业务合作伙伴”
-5. 符号描述语义化：将“倒三角符号”改写为具体的数学术语“nabla算子”或“梯度”
-
-【要求】
-- 保持原意，不要过度发散。
-- 如果包含代词（如“它”），尝试基于常识还原指代对象。
-- 只输出改写后的查询语句，不要输出任何解释、分析或引号。
-
-用户原始查询: "{query}"
-改写后的查询:
-"""
+        # 从 Nacos 获取 Prompt
+        base_prompt = get_prompt("knowledge_query_rewrite_prompt")
+        # 替换 Prompt 中的变量 (如果 prompt 中包含 {query} 占位符)
+        if "{query}" in base_prompt:
+            prompt = base_prompt.format(query=query)
+        else:
+            # Fallback for old prompt format just in case
+            prompt = f"{base_prompt}\n\n用户原始查询: \"{query}\"\n改写后的查询:\n"
+            
         resp = model.invoke([HumanMessage(content=prompt)])
         rewritten = resp.content.strip()
         print(f"🔄 Query Rewritten: '{query}' -> '{rewritten}'")

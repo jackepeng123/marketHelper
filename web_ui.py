@@ -74,15 +74,12 @@ async def stream_chat_from_api(query: str, thread_id: str, request_id: str):
         except Exception as e:
             yield {"type": "error", "content": f"Connection Error: {str(e)}"}
 
-# -------------------------------------------------------------------------
-# Gradio 处理函数
-# -------------------------------------------------------------------------
 async def chat_handler(message: str, history: list, thread_id_in: str, request_id_in: str):
     """
     Gradio 聊天处理函数 (Generator)
     """
     if not message.strip() and not request_id_in:
-        # 如果既没有消息也没有 request_id (用于重连)，则不处理
+        # 如果既没有消息，也没有 request_id (用于重连)，则不处理
         return
         
     # 1. 确定 Thread ID
@@ -129,12 +126,12 @@ async def chat_handler(message: str, history: list, thread_id_in: str, request_i
                 thread_id = meta_data["thread_id"]
             if "request_id" in meta_data:
                 request_id = meta_data["request_id"]
-            yield history, "", thread_id, request_id, ""
+            yield history, "", None, thread_id, request_id, ""
 
         # A. 意图识别
         elif event_type == "intent":
             intent = content
-            yield history, "", thread_id, request_id, intent
+            yield history, "", None, thread_id, request_id, intent
             
         # B. 工具调用 (显示思考过程)
         elif event_type == "tool_start":
@@ -142,7 +139,7 @@ async def chat_handler(message: str, history: list, thread_id_in: str, request_i
             args = event.get("args")
             full_response += f"\n> 🛠️ **正在调用工具**: `{tool_name}`\n"
             history[-1]["content"] = full_response
-            yield history, "", thread_id, request_id, ""
+            yield history, "", None, thread_id, request_id, ""
             
         elif event_type == "tool_end":
             tool_name = event.get("tool")
@@ -162,19 +159,19 @@ async def chat_handler(message: str, history: list, thread_id_in: str, request_i
                 full_response += f"> ✅ `{tool_name}` 完成。\n"
                 
             history[-1]["content"] = full_response
-            yield history, "", thread_id, request_id, ""
+            yield history, "", None, thread_id, request_id, ""
 
         # C. LLM 回答 (打字机效果)
         elif event_type == "answer_chunk":
             full_response += content
             history[-1]["content"] = full_response
-            yield history, "", thread_id, request_id, ""
+            yield history, "", None, thread_id, request_id, ""
             
         # D. 错误处理
         elif event_type == "error":
             full_response += f"\n❌ **Error**: {content}"
             history[-1]["content"] = full_response
-            yield history, "", thread_id, request_id, ""
+            yield history, "", None, thread_id, request_id, ""
 
 # -------------------------------------------------------------------------
 # UI 构建
@@ -231,8 +228,8 @@ with gr.Blocks(title="🍓 智能营销助手") as demo:
             submit_btn = gr.Button("🚀 发送", variant="primary")
             
     # 事件绑定
-    # inputs: [msg, history, thread_id, request_id]
-    # outputs: [chatbot, msg, thread_id, request_id, intent]
+    # inputs: [msg, chatbot, thread_id_input, request_id_input]
+    # outputs: [chatbot, msg, thread_id_input, request_id_input, intent_display]
     
     msg.submit(
         fn=chat_handler,
