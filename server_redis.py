@@ -142,7 +142,7 @@ app.add_middleware(
 # -------------------------------------------------------------------------
 # 配置
 # -------------------------------------------------------------------------
-REDIS_URL = "redis://localhost:6379"
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 STREAM_KEY_PREFIX = "chat:stream:"  # Redis Stream Key 前缀: chat:stream:{request_id}
 
 # -------------------------------------------------------------------------

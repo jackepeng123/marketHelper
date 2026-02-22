@@ -1,0 +1,111 @@
+version: '3.8'
+
+services:
+  # PostgreSQL 数据库
+  postgres:
+    image: postgres:15-alpine
+    container_name: markethelper-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-markethelper}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres123}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-markethelper}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - markethelper-network
+
+  # Redis 缓存
+  redis:
+    image: redis:7-alpine
+    container_name: markethelper-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis123}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - markethelper-network
+
+  # FastAPI 后端服务
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: markethelper-backend
+    restart: unless-stopped
+    command: python server_redis.py
+    env_file:
+      - .env
+    environment:
+      # 数据库连接
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres123}@postgres:5432/${POSTGRES_DB:-markethelper}
+      
+      # Redis 连接 (注意：这里直接在代码中写死了 redis://localhost:6379，需要修改)
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis123}@redis:6379
+      
+      # Phoenix 配置
+      PHOENIX_AUTO_START: ${PHOENIX_AUTO_START:-1}
+      PHOENIX_PORT: 6006
+      PHOENIX_GRPC_PORT: 4317
+      PHOENIX_SQL_DATABASE_SCHEMA: phoenix
+    ports:
+      - "8000:8000"
+      - "6006:6006"  # Phoenix 监控界面
+      - "4317:4317"  # Phoenix gRPC
+    volumes:
+      - ./static:/app/static
+      - ./app:/app/app
+      - ./knowledge:/app/knowledge
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - markethelper-network
+
+  # Gradio 前端服务
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: markethelper-frontend
+    restart: unless-stopped
+    command: python web_ui.py
+    environment:
+      API_BASE_URL: http://backend:8000
+    ports:
+      - "7860:7860"
+    depends_on:
+      - backend
+    networks:
+      - markethelper-network
+
+# 数据卷
+volumes:
+  postgres_data:
+    name: markethelper-postgres-data
+  redis_data:
+    name: markethelper-redis-data
+
+# 网络
+networks:
+  markethelper-network:
+    name: markethelper-network
+    driver: bridge
