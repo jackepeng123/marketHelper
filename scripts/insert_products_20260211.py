@@ -14,7 +14,7 @@ from app.core.llm import get_embeddings_model
 _ = load_dotenv(find_dotenv())
 
 # Excel 文件路径
-EXCEL_PATH = "/Users/penghaofeng/Desktop/项目/营销助手/生意经_商品列表_20260211_2324.xlsx"
+EXCEL_PATH = "scripts/生意经_商品列表_20260211_2324.xlsx"
 
 # 数据库连接
 DB_URL = os.getenv("DATABASE_URL")
