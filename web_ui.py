@@ -126,12 +126,12 @@ async def chat_handler(message: str, history: list, thread_id_in: str, request_i
                 thread_id = meta_data["thread_id"]
             if "request_id" in meta_data:
                 request_id = meta_data["request_id"]
-            yield history, "", None, thread_id, request_id, ""
+            yield history, "", thread_id, request_id, ""
 
         # A. 意图识别
         elif event_type == "intent":
             intent = content
-            yield history, "", None, thread_id, request_id, intent
+            yield history, "", thread_id, request_id, intent
             
         # B. 工具调用 (显示思考过程)
         elif event_type == "tool_start":
@@ -139,7 +139,7 @@ async def chat_handler(message: str, history: list, thread_id_in: str, request_i
             args = event.get("args")
             full_response += f"\n> 🛠️ **正在调用工具**: `{tool_name}`\n"
             history[-1]["content"] = full_response
-            yield history, "", None, thread_id, request_id, ""
+            yield history, "", thread_id, request_id, ""
             
         elif event_type == "tool_end":
             tool_name = event.get("tool")
@@ -159,19 +159,19 @@ async def chat_handler(message: str, history: list, thread_id_in: str, request_i
                 full_response += f"> ✅ `{tool_name}` 完成。\n"
                 
             history[-1]["content"] = full_response
-            yield history, "", None, thread_id, request_id, ""
+            yield history, "", thread_id, request_id, ""
 
         # C. LLM 回答 (打字机效果)
         elif event_type == "answer_chunk":
             full_response += content
             history[-1]["content"] = full_response
-            yield history, "", None, thread_id, request_id, ""
+            yield history, "", thread_id, request_id, ""
             
         # D. 错误处理
         elif event_type == "error":
             full_response += f"\n❌ **Error**: {content}"
             history[-1]["content"] = full_response
-            yield history, "", None, thread_id, request_id, ""
+            yield history, "", thread_id, request_id, ""
 
 # -------------------------------------------------------------------------
 # UI 构建

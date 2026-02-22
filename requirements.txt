@@ -10,6 +10,7 @@ openpyxl
 sqlalchemy
 psycopg2-binary
 psycopg-pool
+asyncpg
 langchain
 langchain-community
 langchain-openai
@@ -17,9 +18,13 @@ langchain-core
 langchain-postgres
 langchain-text-splitters
 langgraph
+langgraph-checkpoint-postgres
 python-dotenv
 pydantic
 arize-phoenix
 openinference-instrumentation-langchain
 requests
 matplotlib
+pymupdf
+unstructured
+markdown
